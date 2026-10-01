@@ -1,0 +1,30 @@
+<!--
+  Drop-in replacement for the teacher login in the page's HTML.
+  The page holds NO password, hash, or attempt counter. It only asks the
+  server (TeacherAuth.gs) and keeps the session token it gets back.
+-->
+<div id="teacherLogin">
+  <label for="tpw">Teacher password</label>
+  <input id="tpw" type="password" autocomplete="current-password">
+  <button id="tgo" type="button">Unlock</button>
+  <p id="tmsg" role="alert"></p>
+</div>
+<script>
+  let teacherToken = null;
+  document.getElementById('tgo').addEventListener('click', () => {
+    const btn = document.getElementById('tgo'), msg = document.getElementById('tmsg');
+    btn.disabled = true; msg.textContent = 'Checking…';
+    google.script.run
+      .withSuccessHandler(res => {
+        btn.disabled = false;
+        document.getElementById('tpw').value = '';
+        if (!res.ok) { msg.textContent = res.msg; return; }
+        teacherToken = res.token;
+        msg.textContent = '';
+        // Load teacher data from the server, passing the token every time:
+        google.script.run.withSuccessHandler(showTeacherView).getClassData(teacherToken);
+      })
+      .withFailureHandler(() => { btn.disabled = false; msg.textContent = 'Could not reach the server.'; })
+      .checkTeacherPassword(document.getElementById('tpw').value);
+  });
+</script>
