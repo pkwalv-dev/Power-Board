@@ -1,59 +1,47 @@
 # Power-Board
 
-Apps Script version of the Power Standards Board, hardened after a student
-security test.
+Server code for the Power Standards Board Google Apps Script web app
+(bound to the Google Sheet that holds the Roster and Progress tabs).
 
-## What was wrong
+- `apps-script/Code.gs`: server (sign-in, grading, saving to the Sheet, teacher views)
+- `apps-script/Questions.gs`: question generators (unchanged)
+- `Index.html`: the page. Unchanged, so it's not stored here.
 
-The page ran everything in the student's browser, so anything could be read
-or changed with dev tools:
+## Security fix: wrong-guess limits (Oct 2026)
 
-1. **Teacher password**: the password and its check lived in the page.
-2. **Guess limit**: the "too many guesses" counter lived in the page; editing it
-   and reloading gave unlimited guesses.
-3. **Scores and answers**: the answer key was generated in the page, and
-   scores were calculated there before saving, so a student could find answers
-   or report a fake 10/10.
+A student found she could make unlimited PIN guesses by changing the name on
+the page and trying again. Wrong guesses were counted separately for each
+student name and each Google account, with no overall cap, so when one name
+locked she switched to another (or waited 5 minutes).
 
-## What changed
+Wrong guesses are now counted on the server in several ways at once, so
+switching names, accounts or reloading doesn't reset them:
 
-The page (`Index.html`) now only displays what the server sends. It holds no
-password, guess counter, answer key, or scores.
-
-| File | Runs on | Does |
+| Limit | Wrong guesses | Lockout |
 | --- | --- | --- |
-| `Code.gs` | Google's server | Serves the page, grades quizzes, stores scores, serves the teacher dashboard |
-| `Quiz.gs` | Google's server | Builds the questions; answers stay on the server until a quiz is submitted |
-| `TeacherAuth.gs` | Google's server | Teacher password (salted hash), guess limit, 6-hour login token |
-| `Index.html` | Browser | The student and teacher screens |
+| One student's PIN, from anyone | 5 | 5 min |
+| One student's PIN, per day | 20 | until the teacher clears it |
+| One person, across all names | 10 | 15 min |
+| Whole class combined | 60 | 15 min |
+| Teacher passphrase, per person | 10 | 10 min |
+| Teacher passphrase, everyone combined | 20 | 60 min (the sheet owner's own account still gets in) |
 
-- **Password:** stored only as a salted hash in Script Properties.
-- **Guess limit:** 5 wrong guesses per visitor or 25 total, then a 15-minute
-  lockout, plus a 1-second delay per miss. Reloading the page doesn't reset it.
-- **Grading:** the page gets questions without answers. A quiz is graded once
-  on submit, and then the results and explanations come back. Each quiz can
-  be submitted once.
-- **Server load:** two calls per quiz (start, submit) plus one when a student
-  signs in. Well inside Apps Script limits for a school.
-- **Change in how quizzes work:** answers are no longer shown one question at
-  a time. Students answer all 10 questions (and can go back), then see their
-  score and a review of what they missed.
+In a simulated 24-hour attack, PIN guesses that reached a real check dropped
+from 720 per student to 20.
+
+The teacher passphrase also moved out of the code into a Script property, so
+it's no longer in the source.
+
+**Sheet menu → Power Standards → Clear sign-in lockouts** unlocks students
+(per-person limits expire on their own within 15 minutes).
 
 ## Install
 
-1. In the Apps Script project, replace the existing files with `Code.gs`,
-   `Quiz.gs`, `TeacherAuth.gs` and `Index.html` (the HTML file must be named
-   `Index`).
-2. Open `TeacherAuth.gs`, put your password in `setupPassword()`, select
-   `setupPassword` and click **Run**. Then delete the password from the code
-   and save.
-3. **Deploy > Manage deployments > Edit > New version > Deploy.**
-   Execute as: **Me**. Who has access: whoever needs it (e.g. anyone in your school).
+1. In the Apps Script editor, replace everything in **Code** with
+   `apps-script/Code.gs`. Leave **Questions** and **Index** as they are.
+2. **Project Settings (gear) → Script properties → Add property**:
+   name `TEACHER_PIN`, value a new passphrase of 8+ characters. Pick a new
+   one, since the old one was typed into a chat.
+3. **Deploy → Manage deployments → Edit → Version: New version → Deploy.**
 
-Locked out? Run `resetLockout()` from the editor.
-
-## Known limit
-
-Students type their own name, so one student could take quizzes under
-another's name. They still have to earn the score. Requiring a school Google
-sign-in would close this.
+Student progress lives in the Progress tab of the Sheet and is not touched.
