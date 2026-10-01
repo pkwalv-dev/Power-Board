@@ -4,11 +4,11 @@
 // ===== Settings =====
 // Teacher passphrase lives in Project Settings > Script properties as TEACHER_PIN (8+ characters),
 // so it is never in the code.
-const TEACHER_PIN = PropertiesService.getScriptProperties().getProperty('TEACHER_PIN') || '';
+const PROPS = PropertiesService.getScriptProperties();
+const TEACHER_PIN = PROPS.getProperty('TEACHER_PIN') || '';
 const SHEET_NAME = 'Progress';
 const ROSTER_NAME = 'Roster';
-const STDS = ['BF1', 'BF2', 'LE1'];
-const BOXES = 5;                        // boxes per standard; a full board is STDS.length * BOXES
+const BOXES = 5;                        // boxes per standard; a quarter's board is (its standards) * BOXES
 const HIST_MAX = 40;                    // recent quizzes kept per student (for badges)
 const LIMITS = {
   // Wrong-guess limits. Each one is counted on the server; switching names or Google accounts doesn't reset them.
@@ -25,15 +25,74 @@ const LIMITS = {
   teacherSessionMin: 360                // teacher / class board sign-in
 };
 
+// ===== Courses and quarters =====
+// One copy of this code serves either course: the COURSE script property picks it (Sheet menu > Power Standards > Set course).
+// Each standard: [question set in Questions.gs, code, title, subtitle].
+const COURSES = {
+  M1: { name: 'Math 1', quarters: [
+    [['BF1', 'NC.M1.F-BF.1', 'Write a function from a situation', 'Rules from words, tables, and graphs'],
+     ['BF2', 'NC.M1.F-BF.2', 'Arithmetic and geometric sequences', 'Recursive and explicit rules'],
+     ['LE1', 'NC.M1.F-LE.1', 'Linear or exponential?', 'Tell the two apart']],
+    [['IF2', 'NC.M1.F-IF.2', 'Function notation', 'Evaluate f(x) and explain what it means'],
+     ['IF4', 'NC.M1.F-IF.4', 'Read key features of graphs', 'Intercepts, maximums, and intervals in context'],
+     ['CED3', 'NC.M1.A-CED.3', 'Model with systems', 'Write systems of equations and inequalities'],
+     ['GPE5', 'NC.M1.G-GPE.5', 'Parallel and perpendicular lines', 'Use slopes to compare and write lines']],
+    [['IF7', 'NC.M1.F-IF.7', 'Key features from equations', 'Intercepts, vertex, range, and end behavior'],
+     ['IF9', 'NC.M1.F-IF.9', 'Compare two functions', 'Different representations, side by side'],
+     ['CED3', 'NC.M1.A-CED.3', 'Model with systems', 'Write systems of equations and inequalities'],
+     ['REI6', 'NC.M1.A-REI.6', 'Solve systems', 'Graphs, tables, substitution, and elimination']],
+    [['APR1', 'NC.M1.A-APR.1', 'Polynomial operations', 'Add, subtract, and multiply'],
+     ['SID2', 'NC.M1.S-ID.2', 'Compare data sets', 'Center and spread'],
+     ['SID6', 'NC.M1.S-ID.6', 'Scatter plots and models', 'Fit lines and read residuals'],
+     ['SID8', 'NC.M1.S-ID.8', 'Correlation', 'What r tells you']]] },
+  M8: { name: 'Math 8', quarters: [
+    [['EE1', 'NC.8.EE.1', 'Exponent properties', 'Integer exponents and equivalent expressions'],
+     ['EE7', 'NC.8.EE.7', 'Solve linear equations', 'One, none, or infinitely many solutions'],
+     ['EE8', 'NC.8.EE.8', 'Systems of equations', 'Solve by graphing and reasoning']],
+    [['F4', 'NC.8.F.4', 'Model with linear functions', 'Rate of change and initial value'],
+     ['EE7', 'NC.8.EE.7', 'Solve linear equations', 'One, none, or infinitely many solutions'],
+     ['EE8', 'NC.8.EE.8', 'Systems of equations', 'Solve by graphing and reasoning']],
+    [['F1', 'NC.8.F.1', 'What is a function?', 'One output for every input'],
+     ['F2', 'NC.8.F.2', 'Compare functions', 'Different representations'],
+     ['F3', 'NC.8.F.3', 'Linear or nonlinear?', 'Recognize y = mx + b'],
+     ['F4', 'NC.8.F.4', 'Model with linear functions', 'Rate of change and initial value'],
+     ['G9', 'NC.8.G.9', 'Volume', 'Cones, cylinders, and spheres'],
+     ['SP1', 'NC.8.SP.1', 'Scatter plots', 'Association, outliers, and patterns']],
+    [['G7', 'NC.8.G.7', 'Pythagorean theorem', 'Missing sides in 2-D and 3-D'],
+     ['G8', 'NC.8.G.8', 'Distance on the coordinate plane', 'Use the Pythagorean theorem'],
+     ['EE1', 'NC.8.EE.1', 'Exponent properties', 'Integer exponents and equivalent expressions'],
+     ['SP2', 'NC.8.SP.2', 'Lines of best fit', 'Fit a line and judge the fit'],
+     ['SP3', 'NC.8.SP.3', 'Use linear models', 'Slope and intercept in context']]] }
+};
+const COURSE_ID = COURSES[PROPS.getProperty('COURSE')] ? PROPS.getProperty('COURSE') : 'M1';
+const COURSE = COURSES[COURSE_ID];
+const QS = [1, 2, 3, 4];
+const QUARTER = (q => q >= 1 && q <= 4 ? q : 1)(Math.floor(+PROPS.getProperty('QUARTER')));   // current quarter
+// One entry per standard per quarter. A standard that comes back in a later quarter gets a fresh row
+// (id like CED3_Q3), so each quarter's board starts empty. Math 1 Q1 keeps its original ids (BF1, BF2, LE1).
+const STD_LIST = (() => {
+  const seen = {}, out = [];
+  COURSE.quarters.forEach((list, i) => list.forEach(([gen, code, title, sub]) => {
+    out.push({ id: seen[gen] ? gen + '_Q' + (i + 1) : gen, gen: gen, code: code, title: title, sub: sub, q: i + 1 });
+    seen[gen] = 1;
+  }));
+  return out;
+})();
+const STDS = STD_LIST.map(s => s.id);
+const stdsIn_ = q => STD_LIST.filter(s => s.q === q);
+const doneCol_ = q => (q === 1 ? '' : 'Q' + q + ' ') + 'board completed';
+const errCol_ = q => (q === 1 ? '' : 'Q' + q + ' ') + 'misses at completion';
+
 const HEAD = ['id', 'name', 'period']
   .concat(STDS.reduce((a, s) => a.concat([s + ' best', s + ' quizzes', s + ' boxes', s + ' missed']), []))
-  .concat(['board completed', 'misses at completion', 'updated', 'history']);
-const TEXT_COLS = ['id', 'name', 'board completed', 'updated', 'history'].map(n => HEAD.indexOf(n) + 1);
+  .concat(QS.reduce((a, q) => a.concat([doneCol_(q), errCol_(q)]), []))
+  .concat(['updated', 'history']);
+const TEXT_COLS = ['id', 'name', 'updated', 'history'].concat(QS.map(doneCol_)).map(n => HEAD.indexOf(n) + 1);
 const ROW_FORMATS = HEAD.map((_, i) => TEXT_COLS.indexOf(i + 1) >= 0 ? '@' : '0');
 
 function doGet() {
   return HtmlService.createHtmlOutputFromFile('Index')
-    .setTitle('Power Standards Board')
+    .setTitle('Power Standards Board · ' + COURSE.name)
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
@@ -43,7 +102,33 @@ function onOpen() {
     .addItem('Set up / check roster', 'menuCheckRoster')
     .addItem('Fill in missing student PINs', 'menuFillPins')
     .addItem('Clear sign-in lockouts', 'menuClearLocks')
+    .addSeparator()
+    .addItem('Set current quarter', 'menuSetQuarter')
+    .addItem('Set course (Math 1 or Math 8)', 'menuSetCourse')
     .addToUi();
+}
+function menuSetQuarter() {
+  ownerOnly_();
+  const ui = SpreadsheetApp.getUi();
+  const r = ui.prompt('Current quarter', 'Now: Q' + QUARTER + '. Students see this quarter’s board and can review earlier quarters. Enter 1, 2, 3, or 4:', ui.ButtonSet.OK_CANCEL);
+  if (r.getSelectedButton() !== ui.Button.OK) return;
+  const q = String(r.getResponseText()).trim();
+  if (!/^[1-4]$/.test(q)) { ui.alert('Please enter 1, 2, 3, or 4.'); return; }
+  PROPS.setProperty('QUARTER', q);
+  ui.alert('Current quarter is now Q' + q + '. Students see it the next time they load the page.');
+}
+function menuSetCourse() {
+  ownerOnly_();
+  const ui = SpreadsheetApp.getUi();
+  const r = ui.prompt('Course', 'Now: ' + COURSE.name + '. Enter M1 for Math 1 or M8 for Math 8:', ui.ButtonSet.OK_CANCEL);
+  if (r.getSelectedButton() !== ui.Button.OK) return;
+  const c = String(r.getResponseText()).trim().toUpperCase();
+  if (!COURSES[c]) { ui.alert('Please enter M1 or M8.'); return; }
+  if (c === COURSE_ID) { ui.alert('This sheet is already set to ' + COURSE.name + '.'); return; }
+  const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME), n = sh ? sh.getLastRow() - 1 : 0;
+  if (n > 0 && ui.alert('The Progress tab has ' + n + ' student rows from ' + COURSE.name + '. Switching courses will erase those scores. Continue?', ui.ButtonSet.YES_NO) !== ui.Button.YES) return;
+  PROPS.setProperty('COURSE', c);
+  ui.alert('This sheet is now ' + COURSES[c].name + '. Reload the web app to see it.');
 }
 function ownerOnly_() {
   const a = Session.getActiveUser().getEmail(), e = Session.getEffectiveUser().getEmail();
@@ -198,28 +283,33 @@ function clean_(o) {
   hist = (Array.isArray(hist) ? hist : []).filter(e => Array.isArray(e) && e.length === 4)
     .map(e => [String(e[0]).slice(0, 16), +e[1] || 0, clamp_(e[2], 0, STDS.length - 1), clamp_(e[3], 0, 10)])
     .slice(-HIST_MAX);
-  return { name: name, cls: cls, std: std, done: iso_(o.done), doneErr: clamp_(o.doneErr, 0, 99999), updated: iso_(o.updated), hist: hist };
+  const done = {}, doneErr = {};
+  QS.forEach(q => { done[q] = iso_(o.done && o.done[q]); doneErr[q] = clamp_(o.doneErr && o.doneErr[q], 0, 99999); });
+  return { name: name, cls: cls, std: std, done: done, doneErr: doneErr, updated: iso_(o.updated), hist: hist };
 }
 function toRow_(r) {
   return [idOf_(r.cls, r.name), r.name, r.cls]
     .concat(STDS.reduce((a, s) => a.concat([r.std[s].best, r.std[s].att, r.std[s].mast, r.std[s].wrong]), []))
-    .concat([r.done, r.doneErr, r.updated, JSON.stringify(r.hist)]);
+    .concat(QS.reduce((a, q) => a.concat([r.done[q], r.doneErr[q]]), []))
+    .concat([r.updated, JSON.stringify(r.hist)]);
 }
 function fromRow_(row) {
-  const o = { name: row[1], cls: String(row[2]), std: {} };
+  const o = { name: row[1], cls: String(row[2]), std: {}, done: {}, doneErr: {} };
   STDS.forEach((s, i) => { const b = 3 + i * 4; o.std[s] = { best: row[b], att: row[b + 1], mast: row[b + 2], wrong: row[b + 3] }; });
   const b = 3 + STDS.length * 4;
-  o.done = row[b]; o.doneErr = row[b + 1]; o.updated = row[b + 2]; o.hist = row[b + 3];
+  QS.forEach((q, i) => { o.done[q] = row[b + 2 * i]; o.doneErr[q] = row[b + 2 * i + 1]; });
+  o.updated = row[b + 2 * QS.length]; o.hist = row[b + 2 * QS.length + 1];
   return clean_(o);
 }
-function boxes_(r) { return STDS.reduce((n, s) => n + Math.min(r.std[s].mast, BOXES), 0); }
-function missed_(r) { return STDS.reduce((n, s) => n + r.std[s].wrong, 0); }
+function boxes_(r, q) { return stdsIn_(q).reduce((n, s) => n + Math.min(r.std[s.id].mast, BOXES), 0); }
+function missed_(r, q) { return stdsIn_(q).reduce((n, s) => n + r.std[s.id].wrong, 0); }
 function apply_(r, ev, now) {
   if (r.hist.some(e => e[0] === ev.id)) return r;          // already recorded
   const st = r.std[ev.std], sc = ev.sc;
   st.att += 1; st.best = Math.max(st.best, sc); st.wrong += 10 - sc;
   if (sc === 10) st.mast += 1;
-  if (!r.done && boxes_(r) >= STDS.length * BOXES) { r.done = new Date(now).toISOString(); r.doneErr = missed_(r); }
+  const q = STD_LIST[STDS.indexOf(ev.std)].q;
+  if (!r.done[q] && boxes_(r, q) >= stdsIn_(q).length * BOXES) { r.done[q] = new Date(now).toISOString(); r.doneErr[q] = missed_(r, q); }
   r.hist.push([ev.id, now, STDS.indexOf(ev.std), sc]);
   r.hist = r.hist.slice(-HIST_MAX);
   r.updated = new Date(now).toISOString();
@@ -244,6 +334,14 @@ function session_(token) {
   if (!v) fail_('SESSION', 'Your sign-in expired. Please sign in again.');
   c.put('s:' + token, v, LIMITS.sessionMin * 60);   // sliding expiry
   return JSON.parse(v);
+}
+
+// Course, quarters, and standards for the page.
+function getConfig() {
+  return {
+    course: COURSE.name, current: QUARTER,
+    quarters: QS.map(q => ({ q: q, stds: stdsIn_(q).map(s => ({ id: s.id, code: s.code, title: s.title, sub: s.sub })) }))
+  };
 }
 
 // Names for the sign-in list.
@@ -284,7 +382,9 @@ function getMe(token) {
 // ===== Quizzes (graded on the server; answers never leave until you commit) =====
 function startQuiz(token, std) {
   const s = session_(token);
-  if (typeof std !== 'string' || STDS.indexOf(std) < 0) fail_('BAD', 'Unknown standard.');
+  const inst = typeof std === 'string' ? STD_LIST[STDS.indexOf(std)] : null;
+  if (!inst) fail_('BAD', 'Unknown standard.');
+  if (inst.q > QUARTER) fail_('BAD', 'That quarter has not started yet.');
   const c = cache_(), now = Date.now();
   const today = Utilities.formatDate(new Date(now), Session.getScriptTimeZone(), 'yyyy-MM-dd');
   const lock = LockService.getScriptLock();
@@ -298,7 +398,7 @@ function startQuiz(token, std) {
     rate.last = now; rate.n += 1;
     c.put('qs:' + s.id, JSON.stringify(rate), 21600);
   } finally { lock.releaseLock(); }
-  const qs = QGEN.makeQuiz(std), qid = newId_();
+  const qs = QGEN.makeQuiz(inst.gen), qid = newId_();
   c.put('q:' + qid, JSON.stringify({ sid: s.id, std: std, ans: qs.map(q => q.ans), n: qs.map(q => q.opts.length), exp: qs.map(q => q.exp), picks: [], served: now, done: false }), 7200);
   return { qid: qid, std: std, qs: qs.map(q => ({ stem: q.stem, opts: q.opts })) };
 }
