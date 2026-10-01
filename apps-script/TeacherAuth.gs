@@ -41,6 +41,9 @@ function resetLockout() {
   var c = CacheService.getScriptCache();
   c.remove('tries_global');
   c.remove('lock_global');
+  // Per-visitor counters can't be listed, so start a new generation of keys.
+  var p = PropertiesService.getScriptProperties();
+  p.setProperty('LOCK_GEN', String(Number(p.getProperty('LOCK_GEN') || 0) + 1));
 }
 
 // ---------- called from the page via google.script.run ----------
@@ -54,7 +57,8 @@ function checkTeacherPassword(pw) {
   lock.waitLock(10000);
   try {
     var cache = CacheService.getScriptCache();
-    var who = Session.getTemporaryActiveUserKey() || 'anon';
+    var gen = PropertiesService.getScriptProperties().getProperty('LOCK_GEN') || '0';
+    var who = gen + '_' + (Session.getTemporaryActiveUserKey() || 'anon');
     var userKey = 'tries_' + who;
 
     if (cache.get('lock_global') || cache.get('lock_' + who)) {
