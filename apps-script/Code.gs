@@ -20,7 +20,7 @@ const LIMITS = {
   teacherAllFails: 20, teacherAllLockMin: 60, // wrong teacher passphrases from everyone combined (owner still gets in)
   quizGapSec: 15,                       // minimum time between starting quizzes
   quizzesPerDay: 60,                    // per student
-  minAnswerMs: 2000,                    // fastest allowed answer
+  minAnswerMs: 2000,                    // fastest allowed time per question (a quiz can't be submitted in under 10x this)
   sessionMin: 60,                       // student sign-in lasts this long without activity
   teacherSessionMin: 360                // teacher / class board sign-in
 };
@@ -402,11 +402,11 @@ function startQuiz(token, std) {
   c.put('q:' + qid, JSON.stringify({ sid: s.id, std: std, ans: qs.map(q => q.ans), n: qs.map(q => q.opts.length), exp: qs.map(q => q.exp), picks: [], served: now, done: false }), 7200);
   return { qid: qid, std: std, qs: qs.map(q => ({ stem: q.stem, opts: q.opts })) };
 }
-function answer(token, qid, i, pick) {
+// The whole 10-question set is graded at once, so students can change answers before they submit.
+function submitQuiz(token, qid, picks) {
   const s = session_(token);
   if (!isId_(qid)) fail_('QUIZ', 'That quiz is not available.');
-  if (typeof i !== 'number' || typeof pick !== 'number') fail_('BAD', 'Invalid answer.');
-  if (!Number.isInteger(i) || i < 0 || i > 9 || !Number.isInteger(pick) || pick < 0 || pick > 3) fail_('BAD', 'Invalid answer.');
+  if (!Array.isArray(picks) || picks.length !== 10 || !picks.every(p => Number.isInteger(p) && p >= 0 && p <= 3)) fail_('BAD', 'Answer all 10 questions first.');
   const c = cache_(), lock = LockService.getScriptLock();
   let st;
   lock.waitLock(15000);
@@ -415,26 +415,16 @@ function answer(token, qid, i, pick) {
     if (!raw) fail_('QUIZ', 'This quiz expired. Start a new one.');
     st = JSON.parse(raw);
     if (st.sid !== s.id) fail_('QUIZ', 'That quiz is not available.');
-    if (i < st.picks.length) return { i: i, pick: st.picks[i], ans: st.ans[i], exp: st.exp[i], again: true };
-    if (i > st.picks.length) fail_('BAD', 'Answer the questions in order.');
-    if (pick >= st.n[i]) fail_('BAD', 'Invalid answer.');
-    const wait = st.served + LIMITS.minAnswerMs - Date.now();
-    if (wait > 0) return { i: i, wait: wait };
-    st.picks.push(pick); st.served = Date.now();
+    if (st.done) fail_('QUIZ', 'That quiz was already submitted.');
+    if (picks.some((p, k) => p >= st.n[k])) fail_('BAD', 'Invalid answer.');
+    const wait = st.served + LIMITS.minAnswerMs * 10 - Date.now();
+    if (wait > 0) return { wait: wait };
+    st.picks = picks; st.done = true;
     c.put('q:' + qid, JSON.stringify(st), 7200);
   } finally { lock.releaseLock(); }
-  const out = { i: i, pick: pick, ans: st.ans[i], exp: st.exp[i] };
-  if (st.picks.length === 10) out.final = finish_(s, qid, st);
+  const out = finish_(s, qid, st);
+  out.ans = st.ans; out.exp = st.exp;
   return out;
-}
-function finishQuiz(token, qid) {
-  const s = session_(token);
-  if (!isId_(qid)) fail_('QUIZ', 'That quiz is not available.');
-  const raw = cache_().get('q:' + qid);
-  if (!raw) fail_('QUIZ', 'This quiz expired. Start a new one.');
-  const st = JSON.parse(raw);
-  if (st.sid !== s.id || st.picks.length !== 10) fail_('QUIZ', 'That quiz is not finished.');
-  return finish_(s, qid, st);
 }
 function finish_(s, qid, st) {
   const score = st.picks.filter((p, k) => p === st.ans[k]).length;

@@ -43,6 +43,8 @@ input,select,textarea{width:100%;font:inherit;padding:10px 12px;min-height:48px;
 .form .btn{margin-top:16px}.err{color:var(--bad);margin:8px 0 0;min-height:1.4em}
 .qhead{display:flex;align-items:center;gap:12px;margin-bottom:8px;color:var(--muted)}.qhead .link{margin-left:auto}
 .prog{display:flex;gap:4px;margin:0 0 14px}.prog i{flex:1;height:10px;border:2px solid var(--ink);border-radius:4px}
+.prog button{flex:1;height:16px;padding:0;border:2px solid var(--ink);border-radius:4px;background:transparent;cursor:pointer}.prog button.a{background:var(--c)}.prog button.cur{outline:2px solid var(--ink);outline-offset:2px}
+.opt.sel{border-color:var(--ink);box-shadow:inset 0 0 0 2px var(--ink)}.opt.sel b{background:var(--ink);color:var(--card)}.qnav .btn:last-child{margin-left:auto}
 .prog i.r{background:var(--c)}.prog i.w{background:repeating-linear-gradient(135deg,transparent 0 3px,var(--line) 3px 5px)}.prog i.cur{border-style:dashed}
 .q{font-size:20px;line-height:1.45;margin:0 0 14px}
 .t{border-collapse:collapse;margin:12px 0 2px}.t th,.t td{border:2px solid var(--ink);padding:5px 14px;text-align:center;font-weight:700}.t th{background:var(--c,var(--hl1));color:var(--onhl)}
@@ -291,51 +293,46 @@ function startQuiz(s){
     S.busy=false;
     const qs=(r&&Array.isArray(r.qs)?r.qs:[]).slice(0,10).map(q=>({stem:String(q.stem),opts:(Array.isArray(q.opts)?q.opts:[]).slice(0,4).map(String)}));
     if(qs.length!==10){S.msg='Could not load a quiz. Try again.';render();return}
-    S.quiz={s,qid:String(r.qid),qs,res:[],i:0,pending:null,err:'',final:null,leave:false};go('quiz');
+    S.quiz={s,qid:String(r.qid),qs,picks:Array(10).fill(null),res:[],i:0,sending:false,err:'',final:null,leave:false};go('quiz');
   }).catch(e=>{S.busy=false;if(handle(e))return;S.msg=errOf(e).msg;render()});
 }
-function choose(j){const Q=S.quiz;if(!Q||Q.res[Q.i]||Q.pending!==null)return;Q.pending=j;Q.err='';render();sendAnswer()}
-function sendAnswer(){
-  const Q=S.quiz;if(!Q||Q.pending===null)return;const i=Q.i;
-  callR('answer',S.tok,Q.qid,i,Q.pending).then(r=>{
+function choose(j){const Q=S.quiz;if(!Q||Q.sending)return;Q.picks[Q.i]=j;Q.err='';render()}
+function goQ(i){const Q=S.quiz;if(!Q||i<0||i>9||i===Q.i)return;Q.i=i;render();window.scrollTo(0,0)}
+function submitQuiz(){
+  const Q=S.quiz;if(!Q||Q.picks.includes(null))return;Q.sending=true;Q.err='';render();
+  callR('submitQuiz',S.tok,Q.qid,Q.picks.slice()).then(r=>{
     if(S.quiz!==Q)return;
-    if(r&&r.wait){setTimeout(sendAnswer,Math.min(5000,+r.wait+60));return}
-    Q.res[i]={pick:clamp(r.pick,0,3),ans:clamp(r.ans,0,3),exp:String(r.exp||'')};
-    if(r.final)Q.final=r.final;
-    Q.pending=null;render();
+    if(r&&r.wait){setTimeout(()=>{if(S.quiz===Q)submitQuiz()},Math.min(20000,+r.wait+60));return}
+    const ans=Array.isArray(r&&r.ans)?r.ans:[],exp=Array.isArray(r&&r.exp)?r.exp:[];
+    Q.res=Q.picks.map((p,i)=>({pick:p,ans:clamp(ans[i],0,3),exp:String(exp[i]||'')}));
+    Q.final=r;Q.sending=false;showResult();
   }).catch(e=>{
-    if(S.quiz!==Q)return;if(handle(e))return;
+    if(S.quiz!==Q)return;Q.sending=false;if(handle(e))return;
     const x=errOf(e);
     if(x.code==='QUIZ'){S.quiz=null;S.msg=x.msg;go('board');return}
     Q.err=x.msg;render();
   });
 }
-function nextQ(){
-  const Q=S.quiz;if(Q.i<9){Q.i++;render();window.scrollTo(0,0);return}
-  if(Q.final){showResult();return}
-  Q.err='';Q.finishing=true;render();
-  callR('finishQuiz',S.tok,Q.qid).then(f=>{Q.final=f;Q.finishing=false;showResult()})
-    .catch(e=>{Q.finishing=false;if(handle(e))return;Q.err=errOf(e).msg;render()});
-}
 function showResult(){const Q=S.quiz;const r=sanitize(Q.final&&Q.final.rec);if(r)S.rec=r;Q.score=clamp(Q.final.score,0,10);Q.pass=Q.score>=PASS;go('result')}
-document.addEventListener('keydown',e=>{if(S.view!=='quiz'||e.target.tagName==='INPUT'||e.target.tagName==='SELECT'||e.ctrlKey||e.metaKey||e.altKey)return;const Q=S.quiz;if(!Q||Q.res[Q.i]||Q.pending!==null)return;let k='1234'.indexOf(e.key);if(k<0)k='abcd'.indexOf(e.key.toLowerCase());if(k>=0&&k<Q.qs[Q.i].opts.length)choose(k)});
+document.addEventListener('keydown',e=>{if(S.view!=='quiz'||e.target.tagName==='INPUT'||e.target.tagName==='SELECT'||e.ctrlKey||e.metaKey||e.altKey)return;const Q=S.quiz;if(!Q||Q.sending)return;
+  if(e.key==='ArrowRight'){goQ(Q.i+1);return}if(e.key==='ArrowLeft'){goQ(Q.i-1);return}
+  let k='1234'.indexOf(e.key);if(k<0)k='abcd'.indexOf(e.key.toLowerCase());if(k>=0&&k<Q.qs[Q.i].opts.length)choose(k)});
 function vQuiz(){
-  const Q=S.quiz,q=Q.qs[Q.i],r=Q.res[Q.i],wait=Q.pending!==null;
-  const seg=[...Array(10)].map((_,i)=>h('i',{class:Q.res[i]?(Q.res[i].pick===Q.res[i].ans?'r':'w'):(i===Q.i?'cur':'')}));
-  const opts=q.opts.map((o,j)=>{
-    let cls='opt',mark='';
-    if(r){if(j===r.ans){cls+=' ok';mark='✓ Correct'}else if(j===r.pick){cls+=' no';mark='✗ Not quite'}}
-    else if(wait&&j===Q.pending){cls+=' pend';mark='Checking…'}
-    return h('button',{class:cls,disabled:!!r||wait,onclick:()=>choose(j)},h('b',{},'ABCD'[j]),h('span',{class:'ot',html:o}),mark&&h('em',{},mark));});
-  const last=Q.i===9;
+  const Q=S.quiz,q=Q.qs[Q.i],left=Q.picks.filter(p=>p===null).length,busy=Q.sending;
+  const seg=Q.picks.map((p,i)=>h('button',{class:(p!==null?'a':'')+(i===Q.i?' cur':''),'aria-label':`Question ${i+1}${p!==null?', answered':''}`,disabled:busy,onclick:()=>goQ(i)}));
+  const opts=q.opts.map((o,j)=>{const sel=Q.picks[Q.i]===j;
+    return h('button',{class:'opt'+(sel?' sel':''),'aria-pressed':sel?'true':'false',disabled:busy,onclick:()=>choose(j)},h('b',{},'ABCD'[j]),h('span',{class:'ot',html:o}),sel&&h('em',{},'Selected'));});
   return h('main',{class:'wrap',style:`--c:${Q.s.c}`},
     h('div',{class:'qhead'},h('span',{class:'chip',style:`background:${Q.s.c}`},Q.s.code),h('span',{},`Question ${Q.i+1} of 10`),
       Q.leave?h('span',{class:'leave'},'Leave? This quiz won’t count. ',h('button',{class:'link',onclick:()=>{S.quiz=null;go('board')}},'Yes'),' ',h('button',{class:'link',onclick:()=>{Q.leave=false;render()}},'No')):h('button',{class:'link',onclick:()=>{Q.leave=true;render()}},'Exit')),
     h('div',{class:'prog'},seg),
     h('div',{class:'card'},h('div',{class:'q',html:q.stem}),h('div',{class:'opts'},opts)),
-    Q.err?h('div',{class:'card fb'},h('p',{class:'err',role:'alert'},Q.err),h('button',{class:'btn',autofocus:true,onclick:()=>{Q.err='';render();if(Q.pending!==null)sendAnswer();else nextQ()}},'Try again')):null,
-    r&&!Q.err?h('div',{class:'card fb'},h('p',{class:'exp',html:r.exp}),
-      h('button',{class:'btn',autofocus:true,disabled:!!Q.finishing,onclick:nextQ},last?(Q.finishing?'Saving…':'See results'):'Next question')):null);
+    h('div',{class:'row qnav'},
+      h('button',{class:'btn alt',disabled:busy||Q.i===0,onclick:()=>goQ(Q.i-1)},'← Back'),
+      h('button',{class:'btn alt',disabled:busy||Q.i===9,onclick:()=>goQ(Q.i+1)},'Next →'),
+      h('button',{class:'btn',disabled:busy||left>0,onclick:submitQuiz},busy?'Checking…':left?`Submit (${left} left)`:'Submit quiz')),
+    Q.err?h('p',{class:'err',role:'alert'},Q.err):null,
+    left===0&&!busy?h('p',{class:'small'},'All 10 answered. You can still go back and change any answer before you submit.'):null);
 }
 function vResult(){
   const Q=S.quiz,st=S.rec.std[Q.s.id];
