@@ -405,9 +405,26 @@ function openDash(cls,q){
   if(S.B)clearTimeout(S.B.timer);
   store.set('mb_dash_cls',String(cls));
   S.B={cls:String(cls),q:q||CFG.current,cards:new Map(),rank:new Map(),prev:new Map(),moved:new Map(),toasts:[],toasting:false,loaded:false,rows:[],timer:0};
-  go('dash');pollDash();
+  go('dash');pollDash();wakeOn();
 }
-function stopDash(){if(S.B){clearTimeout(S.B.timer);clearTimeout(S.B.tt)}S.B=null}
+function stopDash(){if(S.B){clearTimeout(S.B.timer);clearTimeout(S.B.tt)}S.B=null;wakeOff()}
+// Keep the Chromebook/OPS awake while the board is up (Screen Wake Lock).
+// Doesn't reset the panel's own standby timer. The browser drops the lock
+// whenever the tab is hidden, so it's requested again when the board is back.
+const W={lock:null,busy:false,ok:'wakeLock' in navigator};
+async function wakeOn(){
+  if(W.lock||W.busy||!W.ok||document.hidden||S.view!=='dash')return;
+  W.busy=true;
+  try{
+    const l=await navigator.wakeLock.request('screen');
+    if(S.view!=='dash'){l.release().catch(()=>{});return}
+    W.lock=l;l.addEventListener('release',()=>{if(W.lock===l)W.lock=null;wakeShow()});
+  }catch(e){if(e&&e.name==='NotAllowedError'&&document.visibilityState==='visible')W.ok=false}
+  finally{W.busy=false;wakeShow()}
+}
+function wakeOff(){const l=W.lock;W.lock=null;if(l)l.release().catch(()=>{})}
+const wakeText=()=>W.lock?'Screen stays on':W.ok?'':'Screen may sleep';
+function wakeShow(){const el=document.getElementById('wk');if(el)el.textContent=wakeText()}
 function vDash(){
   const B=S.B;
   const sel=h('select',{class:'dsel','aria-label':'Class period',onchange:e=>openDash(e.target.value,B.q)},[1,2,3,4,5,6,7,8].map(n=>h('option',{value:n,selected:B.cls===String(n)},`Period ${n}`)));
@@ -422,7 +439,8 @@ function vDash(){
     h('footer',{class:'lg'},
       h('span',{class:'lgi'},h('i',{class:'glow'}),'Practiced today'),
       BADGE_KEY.map(([i,t])=>h('span',{class:'lgi'},i+' '+t)),
-      h('span',{id:'dst',class:'dst'})),
+      h('span',{id:'dst',class:'dst'}),
+      h('span',{id:'wk',class:'lgi'},wakeText())),
     h('div',{id:'toast',class:'toast','aria-live':'polite'}));
 }
 function fitDash(){
@@ -497,7 +515,7 @@ async function pollDash(){
   }
   B.timer=setTimeout(pollDash,8000);
 }
-document.addEventListener('visibilitychange',()=>{if(!document.hidden&&S.view==='dash'&&S.B)pollDash()});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&S.view==='dash'&&S.B){pollDash();wakeOn()}});
 render();boot();
 
 </script></body></html>
