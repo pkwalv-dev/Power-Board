@@ -57,6 +57,16 @@ unchanged.
 The teacher view and the class board have a quarter picker. Graph questions
 use inline SVG and follow the page's light and dark colors.
 
+## Class board keeps the device awake (Oct 2026)
+
+While the class board is open, the page asks the browser to keep the screen on
+(Screen Wake Lock), so the Chromebook or OPS feeding the panel doesn't go to
+sleep and leave the panel on "No Signal". The footer says **Screen stays on**
+when it's working and **Screen may sleep** when the browser refused.
+
+This doesn't touch the panel's own standby timer: that only resets when
+someone uses the panel, so it still needs the IT exception.
+
 ## Install: Math 1 (your current sheet)
 
 1. In the Apps Script editor, replace everything in **Code**, **Questions**
