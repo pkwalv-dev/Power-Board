@@ -145,15 +145,15 @@ function menuFillPins() {
   ownerOnly_();
   const sh = rosterSheet_(), n = sh.getLastRow();
   if (n < 2) { SpreadsheetApp.getUi().alert('Add students to the Roster tab first (Period, Name).'); return; }
-  const vals = sh.getRange(2, 1, n - 1, 3).getValues();
+  const vals = sh.getRange(2, 1, n - 1, 4).getValues();
   let filled = 0;
-  const out = vals.map(r => {
-    if (String(r[1]).trim() && !normPin_(r[2])) { filled++; return [randomPin_()]; }
+  const out = vals.map(r => {   // students with an email sign in with Google, so they don't need one
+    if (String(r[1]).trim() && !normEmail_(r[3]) && !normPin_(r[2])) { filled++; return [randomPin_()]; }
     return [r[2] === '' ? '' : String(r[2])];
   });
   sh.getRange(2, 3, n - 1, 1).setNumberFormat('@').setValues(out);
   CacheService.getScriptCache().remove('roster');
-  SpreadsheetApp.getUi().alert(filled ? 'Added ' + filled + ' PINs.' : 'Every student already has a PIN.');
+  SpreadsheetApp.getUi().alert(filled ? 'Added ' + filled + ' PINs.' : 'Every student without an email already has a PIN.');
 }
 function menuClearLocks() {
   ownerOnly_();
@@ -186,17 +186,22 @@ function bump_(c, list) { list.forEach(k => c.put(k[0], String(+(c.get(k[0]) || 
 function isOwner_() { const a = who_(); return !!a && a === Session.getEffectiveUser().getEmail(); }
 
 // ===== Roster =====
+// Roster columns: Period, Name, PIN, Email. A student with an Email signs in with that Google account
+// (PIN sign-in is turned off for them); a student without one uses their PIN.
 function rosterSheet_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   let sh = ss.getSheetByName(ROSTER_NAME);
   if (!sh) {
     sh = ss.insertSheet(ROSTER_NAME);
-    sh.getRange(1, 1, 1, 3).setValues([['Period', 'Name', 'PIN']]);
+    sh.getRange(1, 1, 1, 4).setValues([['Period', 'Name', 'PIN', 'Email']]);
     sh.setFrozenRows(1);
     sh.getRange(1, 3, sh.getMaxRows(), 1).setNumberFormat('@');
+  } else if (String(sh.getRange(1, 4).getValue()).trim() === '') {
+    sh.getRange(1, 4).setValue('Email');      // older sheets had three columns
   }
   return sh;
 }
+function normEmail_(v) { const s = str_(v).trim().toLowerCase(); return /^[^\s@<>"]+@[^\s@<>"]+\.[a-z]{2,}$/.test(s) ? s : ''; }
 function idOf_(cls, name) {
   return 'p' + cls + '_' + (String(name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'x');
 }
@@ -204,12 +209,12 @@ function roster_(fresh) {
   const c = cache_();
   if (!fresh) { const hit = c.get('roster'); if (hit) return JSON.parse(hit); }
   const sh = rosterSheet_(), n = sh.getLastRow(), seen = {}, out = [];
-  if (n > 1) sh.getRange(2, 1, n - 1, 3).getValues().forEach(r => {
-    const cls = String(r[0]).trim(), name = cleanName_(r[1]), pin = normPin_(r[2]);
-    if (!/^[1-8]$/.test(cls) || !name || !pin) return;
+  if (n > 1) sh.getRange(2, 1, n - 1, 4).getValues().forEach(r => {
+    const cls = String(r[0]).trim(), name = cleanName_(r[1]), pin = normPin_(r[2]), email = normEmail_(r[3]);
+    if (!/^[1-8]$/.test(cls) || !name || !(pin || email)) return;
     const id = idOf_(cls, name);
     if (seen[id]) return;
-    seen[id] = 1; out.push({ cls: cls, name: name, id: id, pin: pin });
+    seen[id] = 1; out.push({ cls: cls, name: name, id: id, pin: pin, email: email });
   });
   c.put('roster', JSON.stringify(out), 60);
   return out;
@@ -217,13 +222,18 @@ function roster_(fresh) {
 function rosterIssues_() {
   const sh = rosterSheet_(), n = sh.getLastRow(), seen = {}, issues = [];
   if (n < 2) return ['The Roster tab is empty. Add Period and Name for each student, then use "Fill in missing student PINs".'];
-  sh.getRange(2, 1, n - 1, 3).getValues().forEach((r, i) => {
+  const emails = {};
+  sh.getRange(2, 1, n - 1, 4).getValues().forEach((r, i) => {
     const row = i + 2, cls = String(r[0]).trim(), raw = String(r[1]).trim(), name = cleanName_(r[1]);
     if (!raw && !String(r[0]).trim()) return;
     if (!/^[1-8]$/.test(cls)) issues.push('Row ' + row + ': period must be 1–8.');
     if (!name) issues.push('Row ' + row + ': missing name.');
     else if (name !== raw) issues.push('Row ' + row + ': name will show as "' + name + '".');
-    if (!normPin_(r[2])) issues.push('Row ' + row + ': missing or invalid PIN (4 digits).');
+    const rawEmail = String(r[3]).trim(), email = normEmail_(r[3]);
+    if (rawEmail && !email) issues.push('Row ' + row + ': "' + rawEmail.slice(0, 60) + '" is not an email address.');
+    else if (email && emails[email]) issues.push('Row ' + row + ': same email as row ' + emails[email] + '.');
+    if (email) emails[email] = emails[email] || row;
+    else if (!normPin_(r[2])) issues.push('Row ' + row + ': needs a school email or a 4-digit PIN.');
     const id = idOf_(cls, name);
     if (name && seen[id]) issues.push('Row ' + row + ': same name as row ' + seen[id] + ' in that period. Add a letter to tell them apart.');
     seen[id] = seen[id] || row;
@@ -355,6 +365,7 @@ function login(cls, name, pin) {
   cls = str_(cls); name = typeof name === 'string' ? cleanName_(name) : ''; pin = typeof pin === 'string' ? pin : '';
   const st = roster_().find(s => s.cls === cls && s.name === name);
   if (!st) fail_('LOGIN', 'Pick your name from the list.');
+  if (st.email) fail_('LOGIN', 'Use the "Sign in with Google" button with your school account.');
   const c = cache_(), v = viewer_(), L = LIMITS;
   const keys = [['lf:' + st.id, L.loginLockMin], ['ld:' + st.id, 24 * 60], ['lf:all', L.classLockMin]];
   if (v) keys.push(['lv:' + v, L.viewerLockMin]);
@@ -368,8 +379,22 @@ function login(cls, name, pin) {
     fail_('LOGIN', 'Wrong PIN.');
   }
   c.remove('lf:' + st.id);
+  return newSession_(st);
+}
+// Signs in whoever's school Google account matches a roster Email. Google only shares the address with this
+// script when the web app is deployed for "Anyone within" the school's domain, so otherwise this fails (NOGOOGLE)
+// and the page falls back to PINs.
+function googleLogin() {
+  const email = who_().toLowerCase();
+  if (!email) fail_('NOGOOGLE', 'Google sign-in isn’t available here. Use your PIN.');
+  const st = roster_().find(s => s.email === email);
+  if (!st && isOwner_()) fail_('NOGOOGLE', 'You’re signed in as the teacher. Use Teacher view.');
+  if (!st) fail_('GOOGLE', email.slice(0, 80) + ' isn’t on the class roster. Ask your teacher to add it.');
+  return newSession_(st);
+}
+function newSession_(st) {
   const token = newId_();
-  c.put('s:' + token, JSON.stringify({ id: st.id, cls: st.cls, name: st.name }), LIMITS.sessionMin * 60);
+  cache_().put('s:' + token, JSON.stringify({ id: st.id, cls: st.cls, name: st.name }), LIMITS.sessionMin * 60);
   return { token: token, rec: recordsFor_([st])[0] };
 }
 function signOut(token) { if (isId_(token)) cache_().remove('s:' + token); return true; }

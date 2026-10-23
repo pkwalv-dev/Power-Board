@@ -91,6 +91,30 @@ when it's working and **Screen may sleep** when the browser refused.
 This doesn't touch the panel's own standby timer: that only resets when
 someone uses the panel, so it still needs the IT exception.
 
+## Sign in with Google (Oct 2026)
+
+Students whose row on the Roster tab has an **Email** (column D) sign in with
+that school Google account: the page signs them in when it opens, and after
+signing out it's one click on **Sign in with Google**. PIN sign-in is turned
+off for those students, so nobody can guess their way into their board.
+Students without an email still use their PIN, so you can switch a class over
+a few students at a time.
+
+Setup:
+
+1. Paste the student emails into column D of the Roster tab (header `Email`).
+   Capitals don't matter.
+2. Run **Power Standards → Set up / check roster**. It flags bad or duplicate
+   emails and students with neither an email nor a PIN.
+3. **Deploy → Manage deployments → Edit**: keep **Execute as: Me**, set
+   **Who has access: Anyone within** your school's domain, choose **New
+   version**, then **Deploy**. Google only tells the app who's signed in with
+   this setting. With "Anyone", the Google button doesn't appear and
+   everyone uses PINs.
+
+A student signed in to a Google account that isn't on the roster sees
+"…isn't on the class roster. Ask your teacher to add it."
+
 ## Install: Math 1 (your current sheet)
 
 1. In the Apps Script editor, replace everything in **Code**, **Questions**

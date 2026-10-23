@@ -202,7 +202,7 @@ const call=(fn,...a)=>new Promise((ok,no)=>{if(!GS)return no(new Error('NET: Thi
 const errOf=e=>{const m=String((e&&e.message)||e||'').replace(/^Error:\s*/,''),k=m.match(/^([A-Z]+):\s*(.*)$/);return k?{code:k[1],msg:k[2]}:{code:'NET',msg:'Could not reach the server. Check the Wi-Fi and try again.'}};
 // Retry busy/network failures a couple of times (every server step is safe to repeat).
 async function callR(fn,...a){for(let k=0;;k++){try{return await call(fn,...a)}catch(e){if(errOf(e).code!=='NET'||k>=2||!GS)throw e;await new Promise(r=>setTimeout(r,600+Math.random()*900*(k+1)))}}}
-const S={view:'boot',tok:null,rec:null,quiz:null,msg:'',busy:false,q:1,L:{cls:null,names:null,pin:''},T:{tok:null,rows:null,pf:'',q:1,err:'',busy:false,tried:false},B:null,lastAct:Date.now()};
+const S={view:'boot',tok:null,rec:null,quiz:null,msg:'',busy:false,q:1,L:{cls:null,names:null,pin:''},G:{ok:true,busy:false,msg:''},T:{tok:null,rows:null,pf:'',q:1,err:'',busy:false,tried:false},B:null,lastAct:Date.now()};
 function go(v){if(S.view==='dash'&&v!=='dash')stopDash();S.view=v;render();window.scrollTo(0,0)}
 function toLogin(msg){S.tok=null;S.rec=null;S.quiz=null;S.msg=msg||'';S.L.pin='';go('login')}
 function handle(e){const x=errOf(e);if(x.code==='SESSION'){toLogin(x.msg);return true}return false}
@@ -218,7 +218,7 @@ function render(){
   const f=app.querySelector('[autofocus]');if(f)f.focus({preventScroll:true});
 }
 function boot(){
-  S.msg='';call('getConfig').then(c=>{setConfig(c);S.q=CFG.current;S.T.q=CFG.current;document.title=`Power Standards Board · ${CFG.course}`;go('login')})
+  S.msg='';call('getConfig').then(c=>{setConfig(c);S.q=CFG.current;S.T.q=CFG.current;document.title=`Power Standards Board · ${CFG.course}`;go('login');googleSignIn(true)})
     .catch(e=>{S.msg=errOf(e).msg;render()});
 }
 function vBoot(){
@@ -236,6 +236,19 @@ function loadRoster(cls){
   call('getRoster',cls).then(n=>{if(S.L.cls===cls){S.L.names=Array.isArray(n)?n.map(cleanName).filter(Boolean):[];if(S.view==='login')render()}})
     .catch(e=>{if(S.L.cls===cls){S.L.names=[];S.msg=errOf(e).msg;if(S.view==='login')render()}});
 }
+function signedIn(res){
+  S.tok=res.token;S.rec=sanitize(res.rec);S.q=CFG.current;S.lastAct=Date.now();
+  if(S.rec)store.set('mb_profile',{cls:S.rec.cls,name:S.rec.name});
+  go('board');
+}
+// Students on the roster with an email sign in with their school Google account. It's tried once when the page
+// loads; after that (signing out, idle sign-out) it takes a click, so a shared Chromebook doesn't sign straight back in.
+// NOGOOGLE on that first try means the web app isn't deployed for the school's domain, so only PINs work.
+function googleSignIn(auto){
+  const G=S.G;if(G.busy||S.tok)return;G.busy=true;G.msg='';if(!auto)render();
+  call('googleLogin').then(res=>{G.busy=false;if(S.view==='login'&&!S.tok)signedIn(res)})
+    .catch(e=>{G.busy=false;const x=errOf(e);if(auto&&x.code==='NOGOOGLE')G.ok=false;else G.msg=x.msg;if(S.view==='login')render()});
+}
 function vLogin(){
   const p=store.get('mb_profile')||{};
   if(!S.L.cls)loadRoster(/^[1-8]$/.test(String(p.cls))?String(p.cls):'1');
@@ -251,12 +264,17 @@ function vLogin(){
     if(!name){S.msg='Choose your name.';render();return}
     if(!/^\d{4}$/.test(L.pin)){S.msg='Enter your 4-digit PIN.';render();document.getElementById('pin').focus();return}
     S.busy=true;S.msg='';render();
-    call('login',L.cls,name,L.pin).then(res=>{S.busy=false;L.pin='';S.tok=res.token;S.rec=sanitize(res.rec);S.q=CFG.current;store.set('mb_profile',{cls:L.cls,name});S.lastAct=Date.now();go('board')})
+    call('login',L.cls,name,L.pin).then(res=>{S.busy=false;L.pin='';signedIn(res)})
       .catch(e=>{S.busy=false;L.pin='';S.msg=errOf(e).msg;render()});
   };
   pin.addEventListener('keydown',e=>{if(e.key==='Enter')submit()});
   return h('main',{class:'wrap'},head(),
     h('p',{class:'lede'},`Take 10-question mastery quizzes on this quarter’s ${QS[CFG.current].length} power standards. Score 10 out of 10 to color in a box on your board.`),
+    S.G.ok?h('div',{class:'card form'},
+      h('button',{class:'btn',disabled:S.busy||S.G.busy,onclick:()=>googleSignIn(false)},S.G.busy?'Signing in…':'Sign in with Google'),
+      h('p',{class:'small'},'Use your school Google account.'),
+      S.G.msg?h('p',{class:'err',role:'alert'},S.G.msg):null):null,
+    S.G.ok?h('p',{class:'small'},'No school account on the roster yet? Sign in with your PIN:'):null,
     h('div',{class:'card form'},
       h('label',{for:'cl'},'Class period'),cls,
       h('label',{for:'nm'},'Your name'),nm,
