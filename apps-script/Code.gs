@@ -8,6 +8,7 @@ const PROPS = PropertiesService.getScriptProperties();
 const TEACHER_PIN = PROPS.getProperty('TEACHER_PIN') || '';
 const SHEET_NAME = 'Progress';
 const ROSTER_NAME = 'Roster';
+const FLAG_NAME = 'Flags';              // quizzes where the student left the page (tab switch, other window)
 const BOXES = 5;                        // boxes per standard; a quarter's board is (its standards) * BOXES
 const HIST_MAX = 40;                    // recent quizzes kept per student (for badges)
 const LIMITS = {
@@ -403,7 +404,8 @@ function startQuiz(token, std) {
   return { qid: qid, std: std, qs: qs.map(q => ({ stem: q.stem, opts: q.opts })) };
 }
 // The whole 10-question set is graded at once, so students can change answers before they submit.
-function submitQuiz(token, qid, picks) {
+// n and ms: how many times the student left the quiz page, and for how long in total.
+function submitQuiz(token, qid, picks, n, ms) {
   const s = session_(token);
   if (!isId_(qid)) fail_('QUIZ', 'That quiz is not available.');
   if (!Array.isArray(picks) || picks.length !== 10 || !picks.every(p => Number.isInteger(p) && p >= 0 && p <= 3)) fail_('BAD', 'Answer all 10 questions first.');
@@ -419,11 +421,12 @@ function submitQuiz(token, qid, picks) {
     if (picks.some((p, k) => p >= st.n[k])) fail_('BAD', 'Invalid answer.');
     const wait = st.served + LIMITS.minAnswerMs * 10 - Date.now();
     if (wait > 0) return { wait: wait };
+    awayMerge_(st, n, ms);
     st.picks = picks; st.done = true;
     c.put('q:' + qid, JSON.stringify(st), 7200);
   } finally { lock.releaseLock(); }
   const out = finish_(s, qid, st);
-  out.ans = st.ans; out.exp = st.exp;
+  out.ans = st.ans; out.exp = st.exp; out.left = st.away ? st.away.n : 0;
   return out;
 }
 function finish_(s, qid, st) {
@@ -438,8 +441,65 @@ function finish_(s, qid, st) {
     r.name = student.name; r.cls = student.cls;
     apply_(r, { id: qid.slice(0, 16), std: st.std, sc: score }, Date.now());
     writeRow_(sh, at, r);
+    if (st.away && st.away.n) flagWrite_(qid, s, st, score);
     return { score: score, rec: r };
   } finally { lock.releaseLock(); }
+}
+
+// ===== Leaving a quiz (tab switches, other windows) =====
+// The page counts each time a student leaves an open quiz and reports running totals as it happens,
+// so closing the tab doesn't hide it. Each flagged quiz gets a row on the Flags tab.
+// Nothing comes off the board until the teacher decides (decideFlag).
+const FLAG_HEAD = ['quiz', 'when', 'student id', 'name', 'period', 'std', 'standard', 'times left', 'seconds away', 'score', 'status', 'decided'];
+function reportLeave(token, qid, n, ms) {
+  const s = session_(token);
+  if (!isId_(qid)) fail_('QUIZ', 'That quiz is not available.');
+  const c = cache_(), lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    const raw = c.get('q:' + qid);
+    if (!raw) return false;
+    const st = JSON.parse(raw);
+    if (st.sid !== s.id || st.done) return false;
+    if (!awayMerge_(st, n, ms)) return true;
+    c.put('q:' + qid, JSON.stringify(st), 7200);
+    flagWrite_(qid, s, st, '');
+    return true;
+  } finally { lock.releaseLock(); }
+}
+// Totals only go up, so a late or repeated report can't lower them.
+function awayMerge_(st, n, ms) {
+  const a = st.away || { n: 0, ms: 0 }, n2 = Math.max(a.n, clamp_(n, 0, 999)), ms2 = Math.max(a.ms, clamp_(ms, 0, 7200000));
+  if (n2 === a.n && ms2 === a.ms) return false;
+  st.away = { n: n2, ms: ms2 };
+  return true;
+}
+function flagSheet_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sh = ss.getSheetByName(FLAG_NAME);
+  if (!sh) {
+    sh = ss.insertSheet(FLAG_NAME);
+    sh.getRange(1, 1, 1, FLAG_HEAD.length).setValues([FLAG_HEAD]);
+    sh.setFrozenRows(1);
+    sh.getRange(1, 1, sh.getMaxRows(), 2).setNumberFormat('@');
+    sh.getRange(1, FLAG_HEAD.length, sh.getMaxRows(), 1).setNumberFormat('@');
+  }
+  return sh;
+}
+// Call with the script lock held. Updates the counts (and score, once submitted) but never the teacher's decision.
+function flagWrite_(qid, s, st, score) {
+  const sh = flagSheet_(), at = findRow_(sh, qid), sec = Math.round(st.away.ms / 1000);
+  if (at) {
+    sh.getRange(at, 8, 1, 2).setValues([[st.away.n, sec]]);
+    if (score !== '') sh.getRange(at, 10).setValue(score);
+    return;
+  }
+  const inst = STD_LIST[STDS.indexOf(st.std)];
+  sh.appendRow([qid, new Date(st.served).toISOString(), s.id, s.name, s.cls, st.std, inst ? inst.code : st.std, st.away.n, sec, score, 'open', '']);
+}
+function fromFlag_(r) {
+  return { qid: String(r[0]), when: iso_(r[1]), sid: String(r[2]), name: String(r[3]), cls: String(r[4]), std: String(r[5]), code: String(r[6]),
+    n: clamp_(r[7], 0, 999), sec: clamp_(r[8], 0, 7200), score: r[9] === '' ? null : clamp_(r[9], 0, 10), status: String(r[10]), decided: iso_(r[11]) };
 }
 
 // ===== Teacher =====
@@ -471,4 +531,42 @@ function getBoard(token, cls) {
   teacher_(token); cls = str_(cls);
   if (!/^[1-8]$/.test(cls)) fail_('BAD', 'Pick a period.');
   return recordsFor_(roster_().filter(s => s.cls === cls));
+}
+// Open flags plus the last 30 days of decisions, newest first.
+function getFlags(token) {
+  teacher_(token);
+  const sh = flagSheet_(), n = sh.getLastRow();
+  if (n < 2) return [];
+  const since = new Date(Date.now() - 30 * 864e5).toISOString();
+  return sh.getRange(2, 1, n - 1, FLAG_HEAD.length).getValues().map(fromFlag_)
+    .filter(f => isId_(f.qid) && (f.status === 'open' || f.when >= since)).reverse().slice(0, 300)
+    .map(f => { delete f.sid; return f; });
+}
+// The teacher's call on one flag: take = 0 dismisses it, 1-5 takes that many boxes off the quiz's standard.
+// Taking a box from a completed board un-completes it until the student fills it again.
+function decideFlag(token, qid, take) {
+  teacher_(token);
+  if (!isId_(qid)) fail_('BAD', 'Unknown flag.');
+  take = clamp_(take, 0, BOXES);
+  const lock = LockService.getScriptLock();
+  lock.waitLock(25000);
+  try {
+    const fs = flagSheet_(), at = findRow_(fs, qid);
+    if (!at) fail_('BAD', 'That flag is gone. Refresh the page.');
+    const f = fromFlag_(fs.getRange(at, 1, 1, FLAG_HEAD.length).getValues()[0]);
+    if (f.status !== 'open') fail_('BAD', 'That flag was already decided. Refresh the page.');
+    let status = 'dismissed';
+    if (take > 0) {
+      const sh = sheet_(), row = findRow_(sh, f.sid), inst = STD_LIST[STDS.indexOf(f.std)];
+      if (!row || !inst) fail_('BAD', 'That student has no boxes on that standard.');
+      const r = fromRow_(sh.getRange(row, 1, 1, HEAD.length).getValues()[0]);
+      const st = r.std[f.std], had = Math.min(st.mast, BOXES), lost = Math.min(take, had);
+      st.mast = had - lost;
+      if (r.done[inst.q] && boxes_(r, inst.q) < stdsIn_(inst.q).length * BOXES) { r.done[inst.q] = ''; r.doneErr[inst.q] = 0; }
+      writeRow_(sh, row, r);
+      status = 'took ' + lost + (lost === 1 ? ' box' : ' boxes');
+    }
+    fs.getRange(at, 11, 1, 2).setValues([[status, new Date().toISOString()]]);
+    return status;
+  } finally { lock.releaseLock(); }
 }

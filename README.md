@@ -5,7 +5,31 @@ Server code for the Power Standards Board Google Apps Script web app
 
 - `apps-script/Code.gs`: server (sign-in, grading, saving to the Sheet, teacher views)
 - `apps-script/Questions.gs`: question generators (unchanged)
-- `Index.html`: the page. Unchanged, so it's not stored here.
+- `apps-script/Index.html`: the page (student board, quizzes, teacher view, class board)
+
+## Leaving a quiz is flagged (Oct 2026)
+
+During a quiz, the page notices when a student switches tabs, opens another
+window or app, or clicks outside the page for more than a second. The student
+gets a warning on the quiz ("You left this quiz 2 times…"), and the count is
+sent to the server right away, so closing the tab doesn't hide it.
+
+Each flagged quiz gets a row on a new **Flags** tab and shows up in the teacher
+view under **Left the quiz**, with how many times, how long, and the score
+("Not submitted" if they never finished). For each one you choose:
+
+- **Dismiss**: nothing changes.
+- **Take away 1–5 boxes** from that standard (asks "Yes, take" first). If that
+  un-fills a finished board, the board counts as unfinished until the student
+  earns the box back.
+
+Nothing comes off a board until you choose. Decisions stay listed under
+**Recent decisions** for 30 days, and on the Flags tab for good.
+
+This catches students looking things up mid-quiz, but it can't stop them
+(a phone or a second device isn't detectable), and a student who knows how
+could block the page's reports. Clicks on the Google banner above the page
+also count as leaving, so check the seconds before taking boxes.
 
 ## Security fix: wrong-guess limits (Oct 2026)
 

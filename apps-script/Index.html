@@ -122,6 +122,10 @@ input,select,textarea{width:100%;font:inherit;padding:10px 12px;min-height:48px;
 @media (prefers-reduced-motion:reduce){.toast.show{animation:none;opacity:1;transform:translate(-50%,0)}.cpbar i{transition:none}}
 
 .opt.pend{border-color:var(--ink);border-style:dashed}.opt.pend em{color:var(--muted)}
+/* ---- leaving a quiz ---- */
+.warn{margin:0 0 14px;padding:10px 14px;border:2px solid var(--bad);border-radius:10px;background:var(--badbg);color:var(--ink);font-weight:700}
+.dash td select{width:auto;min-height:36px;padding:4px 8px}.sbtn{min-height:36px;padding:4px 12px;font-size:15px}
+.dec{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
 </style></head>
 <body><div id="app"></div>
 <script>// ---------- app ----------
@@ -293,14 +297,14 @@ function startQuiz(s){
     S.busy=false;
     const qs=(r&&Array.isArray(r.qs)?r.qs:[]).slice(0,10).map(q=>({stem:String(q.stem),opts:(Array.isArray(q.opts)?q.opts:[]).slice(0,4).map(String)}));
     if(qs.length!==10){S.msg='Could not load a quiz. Try again.';render();return}
-    S.quiz={s,qid:String(r.qid),qs,picks:Array(10).fill(null),res:[],i:0,sending:false,err:'',final:null,leave:false};go('quiz');
+    S.quiz={s,qid:String(r.qid),qs,picks:Array(10).fill(null),res:[],i:0,sending:false,err:'',final:null,leave:false,away:{n:0,ms:0},awayAt:0,awayT:0,counted:false};go('quiz');
   }).catch(e=>{S.busy=false;if(handle(e))return;S.msg=errOf(e).msg;render()});
 }
 function choose(j){const Q=S.quiz;if(!Q||Q.sending)return;Q.picks[Q.i]=j;Q.err='';render()}
 function goQ(i){const Q=S.quiz;if(!Q||i<0||i>9||i===Q.i)return;Q.i=i;render();window.scrollTo(0,0)}
 function submitQuiz(){
   const Q=S.quiz;if(!Q||Q.picks.includes(null))return;Q.sending=true;Q.err='';render();
-  callR('submitQuiz',S.tok,Q.qid,Q.picks.slice()).then(r=>{
+  callR('submitQuiz',S.tok,Q.qid,Q.picks.slice(),Q.away.n,Math.round(Q.away.ms)).then(r=>{
     if(S.quiz!==Q)return;
     if(r&&r.wait){setTimeout(()=>{if(S.quiz===Q)submitQuiz()},Math.min(20000,+r.wait+60));return}
     const ans=Array.isArray(r&&r.ans)?r.ans:[],exp=Array.isArray(r&&r.exp)?r.exp:[];
@@ -313,6 +317,29 @@ function submitQuiz(){
     Q.err=x.msg;render();
   });
 }
+// ----- leaving the quiz -----
+// Switching tabs, opening another window or app, or clicking outside the page counts once it lasts AWAY_MIN_MS.
+// Totals go to the server as they happen (so closing the tab doesn't hide them); the teacher decides on any penalty.
+const AWAY_MIN_MS=1000;
+const isAway=()=>document.hidden||!document.hasFocus();
+const sendAway=Q=>{if(S.tok)callR('reportLeave',S.tok,Q.qid,Q.away.n,Math.round(Q.away.ms)).catch(()=>{})};
+function awayCheck(){
+  const Q=S.quiz,open=S.view==='quiz'&&Q&&!Q.final;
+  if(open&&isAway()){
+    if(!Q.awayAt){Q.awayAt=Date.now();Q.awayT=setTimeout(()=>{if(Q.awayAt&&!Q.counted){Q.counted=true;Q.away.n++;sendAway(Q)}},AWAY_MIN_MS)}
+    return;
+  }
+  if(!Q||!Q.awayAt)return;
+  clearTimeout(Q.awayT);
+  const ms=Date.now()-Q.awayAt;Q.awayAt=0;
+  if(!Q.counted)return;
+  Q.counted=false;Q.away.ms+=ms;sendAway(Q);
+  if(S.view==='quiz'&&S.quiz===Q)render();
+}
+document.addEventListener('visibilitychange',awayCheck);
+window.addEventListener('blur',awayCheck);
+window.addEventListener('focus',awayCheck);
+const secText=s=>{s=Math.round(s);return s<60?`${s} sec`:`${Math.floor(s/60)} min ${s%60} sec`};
 function showResult(){const Q=S.quiz;const r=sanitize(Q.final&&Q.final.rec);if(r)S.rec=r;Q.score=clamp(Q.final.score,0,10);Q.pass=Q.score>=PASS;go('result')}
 document.addEventListener('keydown',e=>{if(S.view!=='quiz'||e.target.tagName==='INPUT'||e.target.tagName==='SELECT'||e.ctrlKey||e.metaKey||e.altKey)return;const Q=S.quiz;if(!Q||Q.sending)return;
   if(e.key==='ArrowRight'){goQ(Q.i+1);return}if(e.key==='ArrowLeft'){goQ(Q.i-1);return}
@@ -326,6 +353,8 @@ function vQuiz(){
     h('div',{class:'qhead'},h('span',{class:'chip',style:`background:${Q.s.c}`},Q.s.code),h('span',{},`Question ${Q.i+1} of 10`),
       Q.leave?h('span',{class:'leave'},'Leave? This quiz won’t count. ',h('button',{class:'link',onclick:()=>{S.quiz=null;go('board')}},'Yes'),' ',h('button',{class:'link',onclick:()=>{Q.leave=false;render()}},'No')):h('button',{class:'link',onclick:()=>{Q.leave=true;render()}},'Exit')),
     h('div',{class:'prog'},seg),
+    Q.away.n?h('p',{class:'warn',role:'alert'},`You left this quiz ${Q.away.n} ${Q.away.n===1?'time':'times'} (${secText(Q.away.ms/1000)} away). Your teacher sees this and can take away boxes. Stay on this page until you submit.`)
+      :Q.i===0?h('p',{class:'small'},'Stay on this page until you submit. Switching tabs, windows, or apps is flagged for your teacher.'):null,
     h('div',{class:'card'},h('div',{class:'q',html:q.stem}),h('div',{class:'opts'},opts)),
     h('div',{class:'row qnav'},
       h('button',{class:'btn alt',disabled:busy||Q.i===0,onclick:()=>goQ(Q.i-1)},'← Back'),
@@ -343,6 +372,7 @@ function vResult(){
       Q.pass?h('p',{class:'msg'},st.mast<=BOXES?`Mastered. Color in box ${st.mast} on your ${Q.s.code} row.`:`Mastered again. Your ${Q.s.code} row is already full.`)
             :h('p',{class:'msg'},`Not yet. You need 10 out of 10 to master it, and you scored ${Q.score}. Review the misses below, then try again.${Q.score<8?' Stop by for tips before your next try.':''}`),
       boxes(st,Q.s.c),
+      Q.away.n?h('p',{class:'warn'},`Flagged: you left this quiz ${Q.away.n} ${Q.away.n===1?'time':'times'}. Your teacher will review it and may take this box back.`):null,
       h('p',{class:'small'},'Saved for your teacher.')),
     missed.length?h('section',{},h('h2',{class:'h2'},'Review your misses'),
       missed.map(({q,i,r})=>h('div',{class:'card miss'},h('div',{class:'q',html:`${i+1}. ${q.stem}`}),
@@ -355,10 +385,44 @@ function vResult(){
 
 // ----- teacher -----
 function loadAll(){
-  const T=S.T;T.busy=true;T.err='';render();
-  callR('getAll',T.tok).then(rows=>{T.rows=(rows||[]).map(sanitize).filter(Boolean)})
+  const T=S.T;T.busy=true;T.err='';T.ferr='';render();
+  Promise.all([callR('getAll',T.tok),callR('getFlags',T.tok)]).then(([rows,flags])=>{T.rows=(rows||[]).map(sanitize).filter(Boolean);T.flags=(Array.isArray(flags)?flags:[]).map(cleanFlag)})
     .catch(e=>{const x=errOf(e);if(x.code==='SESSION')T.tok=null;T.rows=null;T.err=x.msg})
     .finally(()=>{T.busy=false;if(S.view==='teacher')render()});
+}
+const cleanFlag=f=>({qid:String(f.qid),when:String(f.when||''),name:cleanName(f.name),cls:String(f.cls),code:String(f.code).replace(/^NC\.(M1|8)\./,''),n:clamp(f.n,0,999),sec:clamp(f.sec,0,7200),
+  score:f.score==null?null:clamp(f.score,0,10),status:String(f.status||''),decided:String(f.decided||'')});
+// take = 0 dismisses; 1-5 takes boxes away. Not retried: a repeat would say "already decided".
+function decideFlag(f,take){
+  const T=S.T;T.busy=true;T.ferr='';render();
+  call('decideFlag',T.tok,f.qid,take).then(()=>{T.ask=null;loadAll()})
+    .catch(e=>{const x=errOf(e);if(x.code==='SESSION')T.tok=null;T.busy=false;T.ask=null;T.ferr=x.msg;if(S.view==='teacher')render()});
+}
+const whenText=t=>{const d=new Date(t);return isNaN(d)?'–':d.toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})};
+function flagSection(){
+  const T=S.T,all=(T.flags||[]).filter(f=>!T.pf||f.cls===T.pf);
+  const open=all.filter(f=>f.status==='open'),past=all.filter(f=>f.status!=='open').slice(0,15);
+  T.take=T.take||{};
+  const left=f=>`${f.n}× · ${secText(f.sec)}`,score=f=>f.score==null?'Not submitted':`${f.score}/10`;
+  const decision=f=>{
+    const n=T.take[f.qid]||1;
+    if(T.ask===f.qid)return h('div',{class:'dec'},`Take ${n} ${n===1?'box':'boxes'} of ${f.code} from ${f.name}?`,
+      h('button',{class:'btn sbtn',disabled:T.busy,onclick:()=>decideFlag(f,n)},'Yes, take'),h('button',{class:'btn alt sbtn',disabled:T.busy,onclick:()=>{T.ask=null;render()}},'Cancel'));
+    return h('div',{class:'dec'},
+      h('select',{'aria-label':`Boxes to take from ${f.name}`,onchange:e=>{T.take[f.qid]=+e.target.value}},[1,2,3,4,5].map(k=>h('option',{value:k,selected:k===n},`${k} ${k===1?'box':'boxes'}`))),
+      h('button',{class:'btn sbtn',disabled:T.busy,onclick:()=>{T.ask=f.qid;render()}},'Take away'),
+      h('button',{class:'btn alt sbtn',disabled:T.busy,onclick:()=>decideFlag(f,0)},'Dismiss'));
+  };
+  return [
+    h('h2',{class:'h2'},open.length?`Left the quiz · ${open.length} to review`:'Left the quiz'),
+    T.ferr?h('p',{class:'err',role:'alert'},T.ferr):null,
+    open.length?h('div',{class:'scroll'},h('table',{class:'dash'},h('thead',{},h('tr',{},['Student','Pd','Standard','Started','Left','Score','Decision'].map(x=>h('th',{},x)))),
+      h('tbody',{},open.map(f=>h('tr',{},h('td',{},f.name),h('td',{},f.cls),h('td',{},f.code),h('td',{},whenText(f.when)),h('td',{},left(f)),h('td',{},score(f)),h('td',{},decision(f)))))))
+      :h('p',{class:'small'},'Nobody has left a quiz page. Switching tabs, windows, or apps during a quiz shows up here.'),
+    open.length?h('p',{class:'small'},'Nothing comes off a board until you choose. Taking a box from a finished board un-finishes it until the student earns the box back.'):null,
+    past.length?[h('h2',{class:'h2'},'Recent decisions'),
+      h('div',{class:'scroll'},h('table',{class:'dash'},h('thead',{},h('tr',{},['Student','Pd','Standard','Started','Left','Score','Decision'].map(x=>h('th',{},x)))),
+        h('tbody',{},past.map(f=>h('tr',{},h('td',{},f.name),h('td',{},f.cls),h('td',{},f.code),h('td',{},whenText(f.when)),h('td',{},left(f)),h('td',{},score(f)),h('td',{},`${(f.status||'Decided').replace(/^./,c=>c.toUpperCase())} · ${whenText(f.decided)}`))))))]:null].flat();
 }
 function teacherSignIn(pass){
   const T=S.T;T.busy=true;T.err='';render();
@@ -388,6 +452,7 @@ function vTeacher(){
   const headQ=()=>QL.map(s=>h('th',{title:s.title},short(s)));   // fresh cells for each table
   return h('main',{class:'wrap wide'},top,
     h('div',{class:'row'},h('label',{for:'pf'},'Show'),filter,qsel,h('button',{class:'btn alt',disabled:T.busy,onclick:loadAll},T.busy?'Refreshing…':'Refresh'),h('button',{class:'btn',onclick:()=>openDash(T.pf||store.get('mb_dash_cls')||'1',tq)},'Class board')),
+    flagSection(),
     !rows.length?h('p',{class:'lede'},'No results yet. Scores appear here as students finish quizzes.'):[
       h('h2',{class:'h2'},`Class comparison · Q${tq}`),
       h('div',{class:'scroll'},h('table',{class:'dash'},h('thead',{},h('tr',{},h('th',{},'Class'),h('th',{},'Students'),headQ())),
