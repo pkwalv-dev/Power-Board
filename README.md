@@ -75,6 +75,32 @@ of `wrangler.jsonc`, then
 
 To update after code changes: `cd worker && npm run deploy`. Tests: `npm test`.
 
+## WCPSS Chromebooks: what can go wrong
+
+Student Chromebooks go through the district's web filter (Zscaler) whenever a
+student is signed in with their school account, at school or at home.
+
+- **The address may be blocked or show a warning page.** Zscaler often treats
+  `*.workers.dev` addresses as uncategorized or risky (they're also used for
+  phishing), and blocks brand-new domains for their first weeks. So: test on a
+  student Chromebook *before* the first class, and ask IT to allow your exact
+  address (`power-board.<your-name>.workers.dev`), not all of workers.dev. If you
+  buy a custom domain instead, expect the same "new domain" block for a while.
+- **If it gets blocked later**, students see: "The school web filter is
+  blocking Power Board. Tell your teacher…" instead of "Check the Wi-Fi". That
+  message means IT, not the network. The page never saves a block page as its
+  offline copy, so once IT allows it, it works again right away.
+- **Allow both addresses for Math 8** (`power-board-m8.…`): IT approves each one.
+- **The first day of new PIN cards:** if a lot of wrong PINs pile up (120 in
+  15 minutes, from everyone together), sign-in pauses for everyone. Use
+  **Setup → Clear sign-in lockouts** to restart it right away.
+- **Leaving-the-quiz flags** can come from Chromebook notifications and
+  accessibility extensions (see below). Nothing comes off a board until you decide.
+- **Installing the app** may be turned off by district policy. That's fine: it
+  works the same in a normal tab.
+- **Cloudflare itself can go down** (rare). There's no backup host, so plan a
+  paper fallback for test days.
+
 ---
 
 The sections below describe the features as they were added to the Apps Script
@@ -101,8 +127,10 @@ Nothing comes off a board until you choose. Decisions stay listed under
 
 This catches students looking things up mid-quiz, but it can't stop them
 (a phone or a second device isn't detectable), and a student who knows how
-could block the page's reports. Clicks on the Google banner above the page
-also count as leaving, so check the seconds before taking boxes.
+could block the page's reports. Anything that takes focus from the page also
+counts as leaving: Chromebook notifications, the screen locking, and pop-ups
+from accessibility extensions like Read&Write or a screen reader. Check the
+seconds (and the student's accommodations) before taking boxes.
 
 ## Security fix: wrong-guess limits (Oct 2026)
 
@@ -119,7 +147,7 @@ switching names, accounts or reloading doesn't reset them:
 | One student's PIN, from anyone | 5 | 5 min |
 | One student's PIN, per day | 20 | until the teacher clears it |
 | One person, across all names | 10 | 15 min |
-| Whole class combined | 60 | 15 min |
+| Whole class combined | 120 (was 60) | 15 min |
 | Teacher passphrase, per person | 10 | 10 min |
 | Teacher passphrase, everyone combined | 20 | 60 min (the sheet owner's own account still gets in) |
 

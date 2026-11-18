@@ -1,4 +1,5 @@
 <!doctype html>
+<!-- power-board-shell -->
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Power Standards Board</title>
@@ -211,15 +212,19 @@ const app=document.getElementById('app');
 // This browser's random id (X-PB-Device): the server counts wrong guesses per device. Kept in localStorage when it can be.
 const DEV=(()=>{let d=store.get('pb_dev');if(typeof d!=='string'||!/^[0-9a-f]{32}$/.test(d)){d=[...crypto.getRandomValues(new Uint8Array(16))].map(b=>b.toString(16).padStart(2,'0')).join('');store.set('pb_dev',d)}return d})();
 const MAX_BODY=32*1024,bytes=s=>new TextEncoder().encode(s).length;
+// A web filter (WCPSS uses Zscaler) answers in place of the server: a redirect to its block page (the server never
+// redirects /api), or a page that isn't JSON and didn't come through Cloudflare (Cloudflare adds CF-Ray, even to its own errors).
+const filtered=r=>r.type==='opaqueredirect'||(!/json/i.test(r.headers.get('Content-Type')||'')&&!r.headers.get('CF-Ray')&&!/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname));
+const FILTER_ERR=`FILTER: The school web filter is blocking Power Board. Tell your teacher (they can ask IT to allow ${location.host}).`;
 // POST /api/<fn> {args}. {ok:true} resolves data; {ok:false} rejects with the server's "CODE: message";
 // anything else (offline, timeout, non-JSON, non-2xx) rejects with a plain error, which errOf reads as NET.
 function call(fn,...args){
   const body=JSON.stringify({args});
   if(bytes(body)>MAX_BODY)return Promise.reject(new Error('BAD: That’s too much to send at once. Try a smaller file.'));
   const ac=new AbortController(),t=setTimeout(()=>ac.abort(),20000);
-  return fetch('/api/'+fn,{method:'POST',headers:{'Content-Type':'application/json','X-PB-Device':DEV},body,signal:ac.signal,cache:'no-store'})
-    .then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json()})
-    .then(j=>{if(j&&j.ok===true)return j.data;if(j&&j.ok===false)throw new Error(String(j.err));throw new Error('Bad reply')},e=>{throw new Error('offline')})
+  return fetch('/api/'+fn,{method:'POST',headers:{'Content-Type':'application/json','X-PB-Device':DEV},body,signal:ac.signal,cache:'no-store',redirect:'manual'})
+    .then(r=>{if(filtered(r))throw new Error(FILTER_ERR);if(!r.ok)throw new Error('HTTP '+r.status);return r.json()},()=>{throw new Error('offline')})
+    .then(j=>{if(j&&j.ok===true)return j.data;if(j&&j.ok===false)throw new Error(String(j.err));throw new Error('Bad reply')},e=>{throw String(e&&e.message).startsWith('FILTER:')?e:new Error('offline')})
     .finally(()=>clearTimeout(t));
 }
 // Server errors look like "CODE: message".

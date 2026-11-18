@@ -7,7 +7,7 @@ export const LIMITS = {
   loginFails: 5, loginLockMin: 5,       // wrong PINs for one student (from anyone) before a short lockout
   loginDayFails: 20,                    // wrong PINs for one student in a day before the teacher must clear it
   viewerFails: 10, viewerLockMin: 15,   // wrong PINs from one person, across all names
-  classFails: 60, classLockMin: 15,     // wrong PINs from everyone combined
+  classFails: 120, classLockMin: 15,    // wrong PINs from everyone combined (60 was easy to hit on the first day of new PIN cards)
   teacherFails: 10, teacherLockMin: 10, // wrong teacher passphrases per person
   teacherAllFails: 20, teacherAllLockMin: 60, // wrong teacher passphrases from everyone combined
   quizGapSec: 15,                       // minimum time between starting quizzes

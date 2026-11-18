@@ -86,8 +86,8 @@ describe('roster and sign-in', () => {
     expect((await login('2', 'Cara Diaz', '3456', 'not-hex')).body.ok).toBe(true);
   });
 
-  it('class-wide: 60 wrong PINs from everyone pause all sign-in', async () => {
-    await env.DB.prepare('INSERT INTO counters(key, n, expires) VALUES(?, 59, ?)').bind('lf:all', Date.now() + 6e5).run();
+  it('class-wide: 120 wrong PINs from everyone pause all sign-in', async () => {
+    await env.DB.prepare('INSERT INTO counters(key, n, expires) VALUES(?, ?, ?)').bind('lf:all', LIMITS.classFails - 1, Date.now() + 6e5).run();
     expect((await login('1', 'Ben Ortiz', '0000', null)).body.err).toBe('LOGIN: Wrong PIN.');
     expect((await login('1', 'Ann Lee', '1234', DEV_B)).body.err)
       .toBe('LOGIN: Sign-in is paused because of too many wrong PINs. Try again in a few minutes or ask your teacher.');
