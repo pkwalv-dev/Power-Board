@@ -401,7 +401,7 @@ function vResult(){
       Q.pass?h('p',{class:'msg'},st.mast<=BOXES?`Mastered. Color in box ${st.mast} on your ${Q.s.code} row.`:`Mastered again. Your ${Q.s.code} row is already full.`)
             :h('p',{class:'msg'},`Not yet. You need 10 out of 10 to master it, and you scored ${Q.score}. Review the misses below, then try again.${Q.score<8?' Stop by for tips before your next try.':''}`),
       boxes(st,Q.s.c),
-      Q.away.n?h('p',{class:'warn'},`Flagged: you left this quiz ${Q.away.n} ${Q.away.n===1?'time':'times'}. Your teacher will review it and may take this box back.`):null,
+      Q.away.n?h('p',{class:'warn'},`Flagged: you left this quiz ${Q.away.n} ${Q.away.n===1?'time':'times'}. Your teacher will review it${Q.pass?' and may take this box back':''}.`):null,
       h('p',{class:'small'},'Saved for your teacher.')),
     missed.length?h('section',{},h('h2',{class:'h2'},'Review your misses'),
       missed.map(({q,i,r})=>h('div',{class:'card miss'},h('div',{class:'q',html:`${i+1}. ${q.stem}`}),
@@ -474,7 +474,7 @@ function vTeacher(){
       h('button',{class:'btn',disabled:T.busy,onclick:go_},T.busy?'Checking…':'Open')));
   }
   const tabs=h('div',{class:'qtabs',role:'group','aria-label':'Teacher pages'},[['prog','Progress'],['setup','Setup']].map(([k,t])=>
-    h('button',{class:'qtab','aria-pressed':String(T.tab===k),onclick:()=>{T.tab=k;if(k==='setup')loadSetup();else render()}},t)));
+    h('button',{class:'qtab','aria-pressed':String(T.tab===k),onclick:()=>{T.tab=k;if(k==='setup'){if(T.su)T.su.m={};loadSetup()}else render()}},t)));
   if(T.tab==='setup')return h('main',{class:'wrap wide'},top,tabs,setupSection());
   if(!T.rows)return h('main',{class:'wrap'},top,tabs,h('p',{class:'lede'},T.err||'Loading…'),T.err?h('button',{class:'btn',onclick:loadAll},'Try again'):null);
   const tq=T.q,QL=QS[tq];
