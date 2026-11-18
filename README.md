@@ -1,11 +1,110 @@
 # Power-Board
 
-Server code for the Power Standards Board Google Apps Script web app
-(bound to the Google Sheet that holds the Roster and Progress tabs).
+The Power Standards Board: students take 10-question quizzes on each power
+standard and fill in boxes on their board; the teacher sees everyone's progress.
 
-- `apps-script/Code.gs`: server (sign-in, grading, saving to the Sheet, teacher views)
-- `apps-script/Questions.gs`: question generators (unchanged)
-- `apps-script/Index.html`: the page (student board, quizzes, teacher view, class board)
+**Since Nov 2026 it runs on Cloudflare**, because WCPSS blocked Apps Script for
+students. One Cloudflare Worker serves the page and the server, and a Cloudflare
+D1 database holds everything. No Google services are involved, so a Google
+outage or block can't take it down. Free plan limits: 100,000 requests and
+100,000 database writes a day, which is far more than a few classes use.
+
+- `worker/public/index.html`: the page (student board, quizzes, teacher view, class board, Setup)
+- `worker/src/`: the server (sign-in, grading, limits, teacher setup)
+- `worker/src/questions.js`: generated from `apps-script/Questions.gs`, which stays
+  the one place to edit questions (then run `npm run sync:questions`)
+- `worker/migrations/`: the database tables
+- `apps-script/`: the old Apps Script version, kept for reference only
+- `specs/`: the design specs for the move
+
+## What's different from the Apps Script version
+
+- **PINs only.** Every student signs in with period → name → 4-digit PIN.
+  There's no "Sign in with Google": outside Apps Script, district IT would have
+  to approve it for students under 18.
+- **The Sheet menu is now the Setup tab** in the teacher view: course, current
+  quarter, roster (paste from a spreadsheet), new PINs, printable PIN cards,
+  clear lockouts, import from the old Sheet, and download progress as CSV.
+- **Nothing expires by accident.** Sign-ins, open quizzes and lockouts are kept
+  in the database, not in Google's cache. Apps Script could forget them at any
+  time ("Your sign-in expired", "This quiz expired").
+- **No class-wide lock and no 30-at-once cap.** A whole class can submit at the
+  same moment.
+- **The page installs and opens offline.** The Chromebook keeps a copy of the
+  page, so a shaky connection shows "Could not reach the server… Try again"
+  instead of a blank tab. Quizzes still need the network (grading happens on the server).
+
+## Set up (one time, about 15 minutes, on any computer with Node.js)
+
+1. Create a free Cloudflare account at dash.cloudflare.com (you do this; it
+   needs your email and password).
+2. In a terminal:
+   ```
+   cd worker
+   npm ci
+   npx wrangler login
+   npx wrangler d1 create power-board
+   ```
+   Copy the `database_id` it prints into `worker/wrangler.jsonc` (replace the zeros).
+3. Create the tables, set your teacher passphrase (8+ characters), and publish:
+   ```
+   npm run db:init:remote
+   npx wrangler secret put TEACHER_PIN
+   npm run deploy
+   ```
+   It prints your address, like `https://power-board.<your-name>.workers.dev`.
+4. **Test it on a student Chromebook first** (signed in as a student, on school
+   Wi-Fi): open the address. If you see the sign-in page, you're set. If the
+   district filter (Zscaler) blocks it, ask IT to allow that one address.
+   Or add a custom domain in Cloudflare (Workers → your worker → Settings → Domains).
+5. Open the address → **Teacher view** → your passphrase → **Setup**:
+   - Pick the course and current quarter.
+   - Paste your roster (copy Period, Name, PIN with the header row from the old
+     Roster tab). Students without a PIN get one, and a blank PIN keeps a
+     student's existing one.
+   - **Move from Google Sheets:** in the old Sheet, open the Progress tab →
+     File → Download → CSV, and choose that file. Do the same for the Flags tab.
+     Importing again is safe.
+   - **Print PIN cards** and hand them out.
+
+**Math 8** gets its own address and database:
+`npx wrangler d1 create power-board-m8`, paste that id into the `m8` section
+of `wrangler.jsonc`, then
+`npm run db:init:remote:m8`, `npx wrangler secret put TEACHER_PIN --env m8`,
+`npm run deploy:m8`. In its Setup tab, choose Math 8.
+
+To update after code changes: `cd worker && npm run deploy`. Tests: `npm test`.
+
+## WCPSS Chromebooks: what can go wrong
+
+Student Chromebooks go through the district's web filter (Zscaler) whenever a
+student is signed in with their school account, at school or at home.
+
+- **The address may be blocked or show a warning page.** Zscaler often treats
+  `*.workers.dev` addresses as uncategorized or risky (they're also used for
+  phishing), and blocks brand-new domains for their first weeks. So: test on a
+  student Chromebook *before* the first class, and ask IT to allow your exact
+  address (`power-board.<your-name>.workers.dev`), not all of workers.dev. If you
+  buy a custom domain instead, expect the same "new domain" block for a while.
+- **If it gets blocked later**, students see: "The school web filter is
+  blocking Power Board. Tell your teacher…" instead of "Check the Wi-Fi". That
+  message means IT, not the network. The page never saves a block page as its
+  offline copy, so once IT allows it, it works again right away.
+- **Allow both addresses for Math 8** (`power-board-m8.…`): IT approves each one.
+- **The first day of new PIN cards:** if a lot of wrong PINs pile up (120 in
+  15 minutes, from everyone together), sign-in pauses for everyone. Use
+  **Setup → Clear sign-in lockouts** to restart it right away.
+- **Leaving-the-quiz flags** can come from Chromebook notifications and
+  accessibility extensions (see below). Nothing comes off a board until you decide.
+- **Installing the app** may be turned off by district policy. That's fine: it
+  works the same in a normal tab.
+- **Cloudflare itself can go down** (rare). There's no backup host, so plan a
+  paper fallback for test days.
+
+---
+
+The sections below describe the features as they were added to the Apps Script
+version. They all carried over, except Google sign-in and the Sheet menu (see above).
 
 ## Leaving a quiz is flagged (Oct 2026)
 
@@ -28,8 +127,10 @@ Nothing comes off a board until you choose. Decisions stay listed under
 
 This catches students looking things up mid-quiz, but it can't stop them
 (a phone or a second device isn't detectable), and a student who knows how
-could block the page's reports. Clicks on the Google banner above the page
-also count as leaving, so check the seconds before taking boxes.
+could block the page's reports. Anything that takes focus from the page also
+counts as leaving: Chromebook notifications, the screen locking, and pop-ups
+from accessibility extensions like Read&Write or a screen reader. Check the
+seconds (and the student's accommodations) before taking boxes.
 
 ## Security fix: wrong-guess limits (Oct 2026)
 
@@ -46,7 +147,7 @@ switching names, accounts or reloading doesn't reset them:
 | One student's PIN, from anyone | 5 | 5 min |
 | One student's PIN, per day | 20 | until the teacher clears it |
 | One person, across all names | 10 | 15 min |
-| Whole class combined | 60 | 15 min |
+| Whole class combined | 120 (was 60) | 15 min |
 | Teacher passphrase, per person | 10 | 10 min |
 | Teacher passphrase, everyone combined | 20 | 60 min (the sheet owner's own account still gets in) |
 
