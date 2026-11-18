@@ -1,0 +1,38 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "power-board",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-01",
+  // The page and its files come straight from ./public; only /api/* runs the Worker.
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "power-board",
+      // Paste the database_id printed by:  npx wrangler d1 create power-board
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "observability": { "enabled": true },
+  // Math 8 runs as a second worker with its own database:  npm run deploy:m8
+  "env": {
+    "m8": {
+      "name": "power-board-m8",
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "power-board-m8",
+          // Paste the database_id printed by:  npx wrangler d1 create power-board-m8
+          "database_id": "00000000-0000-0000-0000-000000000000",
+          "migrations_dir": "migrations"
+        }
+      ]
+    }
+  }
+  // The teacher passphrase is a secret, not a setting here:  npx wrangler secret put TEACHER_PIN
+}

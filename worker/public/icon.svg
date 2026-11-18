@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <title>Power Board</title>
+  <rect width="512" height="512" fill="#14213D"/>
+  <g stroke="#F7FAFF" stroke-width="10" stroke-linejoin="round">
+    <rect x="131" y="146" width="62" height="62" rx="12" fill="#FFE14D"/>
+    <rect x="225" y="146" width="62" height="62" rx="12" fill="#FFE14D"/>
+    <rect x="319" y="146" width="62" height="62" rx="12" fill="#FFE14D"/>
+    <rect x="131" y="225" width="62" height="62" rx="12" fill="#FF9EC4"/>
+    <rect x="225" y="225" width="62" height="62" rx="12" fill="#FF9EC4"/>
+    <rect x="319" y="225" width="62" height="62" rx="12" fill="none"/>
+    <rect x="131" y="304" width="62" height="62" rx="12" fill="#5EDCEB"/>
+    <rect x="225" y="304" width="62" height="62" rx="12" fill="none"/>
+    <rect x="319" y="304" width="62" height="62" rx="12" fill="none"/>
+  </g>
+</svg>

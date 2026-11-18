@@ -1,0 +1,13 @@
+{
+  "name": "Power Standards Board",
+  "short_name": "Power Board",
+  "description": "10-question mastery quizzes on this quarter's power standards.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#F7FAFF",
+  "theme_color": "#14213D",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

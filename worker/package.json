@@ -1,0 +1,21 @@
+{
+  "name": "power-board",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run",
+    "sync:questions": "node scripts/sync-questions.mjs",
+    "db:init:local": "wrangler d1 migrations apply power-board --local",
+    "db:init:remote": "wrangler d1 migrations apply power-board --remote",
+    "deploy:m8": "wrangler deploy --env m8",
+    "db:init:remote:m8": "wrangler d1 migrations apply power-board-m8 --remote --env m8"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.23.0",
+    "vitest": "4.1.12",
+    "wrangler": "4.124.0"
+  }
+}
